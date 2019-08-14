@@ -10,3 +10,5 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+/tcp_over_http_proxy
+/tcp_over_http_proxy.conf
