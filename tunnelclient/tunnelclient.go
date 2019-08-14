@@ -16,7 +16,6 @@ type (
 		DestAddr  string
 		LocalAddr string
 		Headers   string
-		isClose   bool
 	}
 )
 
@@ -24,6 +23,7 @@ func NewTunnelHTTPClient() *TunnelHTTPClient {
 	return &TunnelHTTPClient{}
 }
 
+// ListenAndServe 启动服务1
 func (thc *TunnelHTTPClient) ListenAndServe() (err error) {
 	listener, err := net.Listen("tcp", thc.LocalAddr)
 	if err != nil {
@@ -109,12 +109,4 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 
 	go io.Copy(destConn, connReader)
 	io.Copy(conn, destConn)
-}
-
-func transfer(destination io.WriteCloser, source io.ReadCloser, isClose bool) {
-	if isClose {
-		defer destination.Close()
-		defer source.Close()
-	}
-	io.Copy(destination, source)
 }
