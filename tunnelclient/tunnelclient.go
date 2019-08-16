@@ -2,12 +2,16 @@ package tunnelclient
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"github.com/iikira/BaiduPCS-Go/pcsutil/converter"
 	"io"
 	"log"
 	"net"
-	// "os"
-	"bytes"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -67,9 +71,6 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 	for { // 读取剩下的数据
 		line, _, err := connReader.ReadLine()
 		if err != nil {
-			if err == io.EOF {
-				break
-			}
 			log.Printf("read from %s error: %s\n", conn.RemoteAddr(), err)
 			return
 		}
@@ -107,6 +108,104 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		return
 	}
 
-	go io.Copy(destConn, connReader)
-	io.Copy(conn, destConn)
+	// 判断是否为POST
+	// 是的话就直连
+	var (
+		destConn2 net.Conn
+		wg        = sync.WaitGroup{}
+	)
+	wg.Add(1)
+	go func() {
+		io.Copy(conn, destConn)
+		wg.Done()
+	}()
+	for {
+		connLine, err := connReader.ReadSlice('\n')
+		if err != nil {
+			if err != bufio.ErrBufferFull {
+				break
+			}
+			err = nil
+		}
+		connLineFields := bytes.Fields(connLine)
+		if len(connLineFields) == 3 && bytes.Compare(connLineFields[0], []byte("POST")) == 0 {
+			if destConn2 == nil {
+				destConn2, err = net.DialTimeout("tcp", thc.DestAddr, 10*time.Second)
+				if err != nil {
+					log.Printf("dial2 %s error: %s\n", thc.DestAddr, err)
+					return
+				}
+				defer destConn2.Close()
+				wg.Add(1)
+				go func() {
+					io.Copy(conn, destConn2)
+					wg.Done()
+				}()
+			}
+
+			// POST处理
+			destConn2.Write(connLine)
+			destConn2.Write(converter.ToBytes(thc.Headers))
+			var (
+				contentLength int64 = -1
+				buf                 = make([]byte, 8192)
+				n             int
+			)
+			for {
+				connLine, err = connReader.ReadSlice('\n')
+				if err != nil {
+					if err != bufio.ErrBufferFull {
+						return
+					}
+				}
+				destConn2.Write(connLine)
+				if contentLength < 0 {
+					contentLength = parseContentLength(connLine)
+				}
+				if bytes.Compare(connLine, []byte{'\r', '\n'}) == 0 {
+					if contentLength < 0 { // 没有content-length
+						break
+					}
+					// 准备开始传数据
+					for contentLength > 0 {
+						n, err = io.ReadFull(connReader, buf)
+						if err != nil {
+							return
+						}
+
+						destConn2.Write(buf[:n])
+						contentLength -= int64(n)
+					}
+					break
+				}
+			}
+			continue
+		}
+
+		// 普通处理
+		destConn.Write(connLine)
+		_, err = io.Copy(destConn, connReader)
+		if err != nil {
+			break
+		}
+	}
+	wg.Wait()
+}
+
+func parseContentLength(header []byte) int64 {
+	s := bytes.SplitN(header, []byte{':'}, 2)
+	if len(s) != 2 {
+		return -1
+	}
+
+	if strings.Compare(http.CanonicalHeaderKey(converter.ToString(s[0])), "Content-Length") != 0 {
+		return -2
+	}
+
+	i, err := strconv.ParseInt(converter.ToString(bytes.TrimSpace(s[1])), 10, 64)
+	if err != nil {
+		return -3
+	}
+
+	return i
 }
