@@ -87,10 +87,10 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 	}
 
 	defer destConn.Close()
+	destConnReader := bufio.NewReader(destConn)
 
 	fmt.Fprintf(destConn, "%s\r\n%s\r\n", firstLine, thc.Headers)
-	destReader := bufio.NewReader(destConn)
-	destFirstLine, _, err := destReader.ReadLine()
+	destFirstLine, _, err := destConnReader.ReadLine()
 	if err != nil {
 		log.Printf("read dest first line from %s error: %s\n", destConn.RemoteAddr(), err)
 		return
@@ -108,10 +108,22 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		return
 	}
 
+	for { // 读取destConn剩下的数据
+		line, _, err := destConnReader.ReadLine()
+		if err != nil {
+			log.Printf("read from %s error: %s\n", destConn.RemoteAddr(), err)
+			return
+		}
+		if len(line) == 0 { // 读取完毕
+			break
+		}
+	}
+
 	// 判断是否为POST
 	// 是的话就直连
 	var (
 		destConn2 net.Conn
+		buf       = make([]byte, 8192)
 		wg        = sync.WaitGroup{}
 	)
 	wg.Add(1)
@@ -120,20 +132,19 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		wg.Done()
 	}()
 	for {
-		connLine, err := connReader.ReadSlice('\n')
+		n, err := conn.Read(buf)
 		if err != nil {
-			if err != bufio.ErrBufferFull {
-				break
-			}
-			err = nil
+			log.Printf("read from local %s error: %s\n", conn.LocalAddr(), err)
+			break
 		}
-		connLineFields := bytes.Fields(connLine)
-		if len(connLineFields) == 3 && bytes.Compare(connLineFields[0], []byte("POST")) == 0 {
+
+		isPost, remainLength, newData := thc.checkPOST(buf[:n])
+		if isPost {
 			if destConn2 == nil {
 				destConn2, err = net.DialTimeout("tcp", thc.DestAddr, 10*time.Second)
 				if err != nil {
 					log.Printf("dial2 %s error: %s\n", thc.DestAddr, err)
-					return
+					break
 				}
 				defer destConn2.Close()
 				wg.Add(1)
@@ -143,39 +154,18 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 				}()
 			}
 
-			// POST处理
-			destConn2.Write(connLine)
-			destConn2.Write(converter.ToBytes(thc.Headers))
-			var (
-				contentLength int64 = -1
-				buf                 = make([]byte, 8192)
-				n             int
-			)
-			for {
-				connLine, err = connReader.ReadSlice('\n')
+			destConn2.Write(newData)
+			for remainLength > 0 {
+				n, err = conn.Read(buf)
 				if err != nil {
-					if err != bufio.ErrBufferFull {
-						return
-					}
+					log.Printf("POST: read from local %s error: %s\n", conn.LocalAddr(), err)
+					break
 				}
-				destConn2.Write(connLine)
-				if contentLength < 0 {
-					contentLength = parseContentLength(connLine)
-				}
-				if bytes.Compare(connLine, []byte{'\r', '\n'}) == 0 {
-					if contentLength < 0 { // 没有content-length
-						break
-					}
-					// 准备开始传数据
-					for contentLength > 0 {
-						n, err = io.ReadFull(connReader, buf)
-						if err != nil {
-							return
-						}
 
-						destConn2.Write(buf[:n])
-						contentLength -= int64(n)
-					}
+				remainLength -= int64(n)
+				_, err = destConn2.Write(buf[:n])
+				if err != nil {
+					log.Printf("POST: write to remote %s error: %s\n", conn.RemoteAddr(), err)
 					break
 				}
 			}
@@ -183,13 +173,53 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		}
 
 		// 普通处理
-		destConn.Write(connLine)
-		_, err = io.Copy(destConn, connReader)
-		if err != nil {
+		destConn.Write(buf[:n])
+	}
+	wg.Wait()
+}
+
+func (thc *TunnelHTTPClient) checkPOST(data []byte) (ok bool, remainLength int64, newData []byte) {
+	if !bytes.HasPrefix(data, []byte("POST ")) {
+		newData = data
+		return
+	}
+
+	i := bytes.Index(data, []byte{'\r', '\n'})
+	if i == -1 {
+		newData = data
+		return
+	}
+
+	// 是否有结束字段
+	endI := bytes.Index(data[i+2:], []byte{'\r', '\n', '\r', '\n'})
+	if endI == -1 {
+		remainLength = -1
+		newData = data
+		return
+	}
+
+	newData = make([]byte, 0, len(data)+len(thc.Headers))
+	newData = append(newData, data[:i+2]...)
+	newData = append(newData, thc.Headers...)
+	newData = append(newData, data[i+2:]...)
+	ok = true
+	var contentLength int64 = -1
+	headerLines := bytes.Split(data[i:endI], []byte{'\r', '\n'})
+	for _, line := range headerLines {
+		contentLength = parseContentLength(line)
+		if contentLength >= 0 {
 			break
 		}
 	}
-	wg.Wait()
+
+	// 未检测到Content-Length
+	if contentLength < 0 {
+		remainLength = -1
+		return
+	}
+
+	remainLength = contentLength - int64(len(data)-(i+2+endI+4))
+	return
 }
 
 func parseContentLength(header []byte) int64 {
