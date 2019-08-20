@@ -134,7 +134,7 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
-			log.Printf("read from local %s error: %s\n", conn.LocalAddr(), err)
+			// 结束会话
 			break
 		}
 
@@ -204,7 +204,7 @@ func (thc *TunnelHTTPClient) checkPOST(data []byte) (ok bool, remainLength int64
 	newData = append(newData, data[i+2:]...)
 	ok = true
 	var contentLength int64 = -1
-	headerLines := bytes.Split(data[i:endI], []byte{'\r', '\n'})
+	headerLines := bytes.Split(data[i:i+2+endI], []byte{'\r', '\n'})
 	for _, line := range headerLines {
 		contentLength = parseContentLength(line)
 		if contentLength >= 0 {
