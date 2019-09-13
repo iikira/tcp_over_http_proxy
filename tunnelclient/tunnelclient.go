@@ -4,27 +4,30 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/iikira/BaiduPCS-Go/pcsutil/converter"
 	"io"
 	"log"
 	"net"
-	"net/http"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
 
 type (
+	HeadersFunc func(host []byte) string
+
 	TunnelHTTPClient struct {
-		DestAddr  string
-		LocalAddr string
-		Headers   string
+		DestAddr    string
+		LocalAddr   string
+		headersFunc HeadersFunc
+		relayMethod []string
 	}
 )
 
 func NewTunnelHTTPClient() *TunnelHTTPClient {
 	return &TunnelHTTPClient{}
+}
+
+func (thc *TunnelHTTPClient) SetHeadersFunc(fn HeadersFunc) {
+	thc.headersFunc = fn
 }
 
 // ListenAndServe 启动服务1
@@ -89,7 +92,7 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 	defer destConn.Close()
 	destConnReader := bufio.NewReader(destConn)
 
-	fmt.Fprintf(destConn, "%s\r\n%s\r\n", firstLine, thc.Headers)
+	fmt.Fprintf(destConn, "%s\r\n%s\r\n", firstLine, thc.headersFunc(fields[1]))
 	destFirstLine, _, err := destConnReader.ReadLine()
 	if err != nil {
 		log.Printf("read dest first line from %s error: %s\n", destConn.RemoteAddr(), err)
@@ -138,8 +141,8 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 			break
 		}
 
-		isPost, remainLength, newData := thc.checkPOST(buf[:n])
-		if isPost {
+		isRelay, remainLength, newData := thc.checkRelay(buf[:n])
+		if isRelay {
 			if destConn2 == nil {
 				destConn2, err = net.DialTimeout("tcp", thc.DestAddr, 10*time.Second)
 				if err != nil {
@@ -158,14 +161,14 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 			for remainLength > 0 {
 				n, err = conn.Read(buf)
 				if err != nil {
-					log.Printf("POST: read from local %s error: %s\n", conn.LocalAddr(), err)
+					log.Printf("RELAY: read from local %s error: %s\n", conn.LocalAddr(), err)
 					break
 				}
 
 				remainLength -= int64(n)
 				_, err = destConn2.Write(buf[:n])
 				if err != nil {
-					log.Printf("POST: write to remote %s error: %s\n", conn.RemoteAddr(), err)
+					log.Printf("RELAY: write to remote %s error: %s\n", conn.RemoteAddr(), err)
 					break
 				}
 			}
@@ -176,66 +179,4 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		destConn.Write(buf[:n])
 	}
 	wg.Wait()
-}
-
-func (thc *TunnelHTTPClient) checkPOST(data []byte) (ok bool, remainLength int64, newData []byte) {
-	if !bytes.HasPrefix(data, []byte("POST ")) {
-		newData = data
-		return
-	}
-
-	i := bytes.Index(data, []byte{'\r', '\n'})
-	if i == -1 {
-		newData = data
-		return
-	}
-
-	// 是否有结束字段
-	endI := bytes.Index(data[i+2:], []byte{'\r', '\n', '\r', '\n'})
-	if endI == -1 {
-		remainLength = -1
-		newData = data
-		return
-	}
-
-	newData = make([]byte, 0, len(data)+len(thc.Headers))
-	newData = append(newData, data[:i+2]...)
-	newData = append(newData, thc.Headers...)
-	newData = append(newData, data[i+2:]...)
-	ok = true
-	var contentLength int64 = -1
-	headerLines := bytes.Split(data[i:i+2+endI], []byte{'\r', '\n'})
-	for _, line := range headerLines {
-		contentLength = parseContentLength(line)
-		if contentLength >= 0 {
-			break
-		}
-	}
-
-	// 未检测到Content-Length
-	if contentLength < 0 {
-		remainLength = -1
-		return
-	}
-
-	remainLength = contentLength - int64(len(data)-(i+2+endI+4))
-	return
-}
-
-func parseContentLength(header []byte) int64 {
-	s := bytes.SplitN(header, []byte{':'}, 2)
-	if len(s) != 2 {
-		return -1
-	}
-
-	if strings.Compare(http.CanonicalHeaderKey(converter.ToString(s[0])), "Content-Length") != 0 {
-		return -2
-	}
-
-	i, err := strconv.ParseInt(converter.ToString(bytes.TrimSpace(s[1])), 10, 64)
-	if err != nil {
-		return -3
-	}
-
-	return i
 }
