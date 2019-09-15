@@ -12,6 +12,8 @@ import (
 )
 
 type (
+	ServType int
+
 	HeadersFunc func(host []byte) string
 
 	TunnelHTTPClient struct {
@@ -19,6 +21,20 @@ type (
 		LocalAddr   string
 		headersFunc HeadersFunc
 		relayMethod []string
+	}
+)
+
+const (
+	SERV_HTTP_PROXY ServType = iota
+	SERV_REDIRECT
+)
+
+var (
+	// buf Pool
+	bufPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 8192)
+		},
 	}
 )
 
@@ -31,7 +47,7 @@ func (thc *TunnelHTTPClient) SetHeadersFunc(fn HeadersFunc) {
 }
 
 // ListenAndServe 启动服务1
-func (thc *TunnelHTTPClient) ListenAndServe() (err error) {
+func (thc *TunnelHTTPClient) ListenAndServe(st ServType) (err error) {
 	listener, err := net.Listen("tcp", thc.LocalAddr)
 	if err != nil {
 		return
@@ -43,7 +59,12 @@ func (thc *TunnelHTTPClient) ListenAndServe() (err error) {
 			log.Printf("accept error: %s\n", err)
 			continue
 		}
-		go thc.handleTunneling(conn)
+		switch st {
+		case SERV_HTTP_PROXY:
+			go thc.handleTunneling(conn)
+		case SERV_REDIRECT:
+			go thc.handleRedirect(conn)
+		}
 	}
 }
 
@@ -82,6 +103,10 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		}
 	}
 
+	thc.handle(conn, fields[1])
+}
+
+func (thc *TunnelHTTPClient) handle(conn net.Conn, connDestAddr []byte) {
 	// 连接
 	destConn, err := net.DialTimeout("tcp", thc.DestAddr, 10*time.Second)
 	if err != nil {
@@ -92,7 +117,7 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 	defer destConn.Close()
 	destConnReader := bufio.NewReader(destConn)
 
-	fmt.Fprintf(destConn, "%s\r\n%s\r\n", firstLine, thc.headersFunc(fields[1]))
+	fmt.Fprintf(destConn, "CONNECT %s HTTP/1.0\r\n%s\r\n", connDestAddr, thc.headersFunc(connDestAddr))
 	destFirstLine, _, err := destConnReader.ReadLine()
 	if err != nil {
 		log.Printf("read dest first line from %s error: %s\n", destConn.RemoteAddr(), err)
@@ -100,14 +125,15 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 	}
 
 	destFields := bytes.Fields(destFirstLine)
-	if len(fields) != 3 {
-		log.Printf("unknown dest first line: %s\n", firstLine)
+	if len(destFields) < 3 {
+		log.Printf("unknown dest first line: %s\n", destFields)
 		return
 	}
 
 	if destFields[1][0] != '2' {
 		//error
-		fmt.Fprintf(conn, "%s %s %s\r\n\r\n", fields[2], destFields[1], destFields[2])
+		connectStatus := bytes.Join(destFields[3:], []byte{' '})
+		fmt.Fprintf(conn, "%s %s %s\r\n\r\n", connDestAddr, destFields[1], connectStatus)
 		return
 	}
 
@@ -122,16 +148,19 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		}
 	}
 
-	// 判断是否为POST
+	// 判断是否为Relay Method
 	// 是的话就直连
 	var (
 		destConn2 net.Conn
-		buf       = make([]byte, 8192)
+		buf       = bufPool.Get().([]byte)
 		wg        = sync.WaitGroup{}
 	)
+	defer bufPool.Put(buf)
 	wg.Add(1)
 	go func() {
-		io.Copy(conn, destConn)
+		recvBuf := bufPool.Get().([]byte)
+		io.CopyBuffer(conn, destConn, recvBuf)
+		bufPool.Put(recvBuf)
 		wg.Done()
 	}()
 	for {
@@ -152,7 +181,9 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 				defer destConn2.Close()
 				wg.Add(1)
 				go func() {
-					io.Copy(conn, destConn2)
+					recvBuf := bufPool.Get().([]byte)
+					io.CopyBuffer(conn, destConn2, recvBuf)
+					bufPool.Put(recvBuf)
 					wg.Done()
 				}()
 			}

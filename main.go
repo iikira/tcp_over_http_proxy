@@ -9,13 +9,23 @@ import (
 
 var (
 	configPath string
+	servType   tunnelclient.ServType
 	lc         lineconfig.LineConfig
 )
 
 func init() {
 	flag.StringVar(&configPath, "c", "tcp_over_http_proxy.conf", "config path")
+	m := flag.String("m", "http", "serve mode, http or redirect")
 	flag.Parse()
 
+	switch *m {
+	case "http":
+		servType = tunnelclient.SERV_HTTP_PROXY
+	case "redirect":
+		servType = tunnelclient.SERV_REDIRECT
+	default:
+		log.Fatalln("unknown serve mode")
+	}
 	lc = lineconfig.NewLineConfig()
 	err := lc.LoadFrom(configPath)
 	if err != nil {
@@ -32,5 +42,5 @@ func main() {
 		return lc["Headers"]
 	})
 	tc.SetRelayMethod(lc["RelayMethod"])
-	log.Fatalln(tc.ListenAndServe())
+	log.Fatalln(tc.ListenAndServe(servType))
 }
