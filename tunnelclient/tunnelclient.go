@@ -12,9 +12,9 @@ import (
 )
 
 type (
-	ServType int
+	ServMode int
 
-	HeadersFunc func(host []byte) string
+	HeadersFunc func(firstLineFields [][]byte) string
 
 	TunnelHTTPClient struct {
 		DestAddr    string
@@ -25,7 +25,7 @@ type (
 )
 
 const (
-	SERV_HTTP_PROXY ServType = iota
+	SERV_HTTP_PROXY ServMode = iota
 	SERV_REDIRECT
 )
 
@@ -47,7 +47,7 @@ func (thc *TunnelHTTPClient) SetHeadersFunc(fn HeadersFunc) {
 }
 
 // ListenAndServe 启动服务1
-func (thc *TunnelHTTPClient) ListenAndServe(st ServType) (err error) {
+func (thc *TunnelHTTPClient) ListenAndServe(st ServMode) (err error) {
 	listener, err := net.Listen("tcp", thc.LocalAddr)
 	if err != nil {
 		return
@@ -103,10 +103,10 @@ func (thc *TunnelHTTPClient) handleTunneling(conn net.Conn) {
 		}
 	}
 
-	thc.handle(conn, fields[1])
+	thc.handle(conn, fields)
 }
 
-func (thc *TunnelHTTPClient) handle(conn net.Conn, connDestAddr []byte) {
+func (thc *TunnelHTTPClient) handle(conn net.Conn, firstLineField [][]byte) {
 	// 连接
 	destConn, err := net.DialTimeout("tcp", thc.DestAddr, 10*time.Second)
 	if err != nil {
@@ -117,7 +117,12 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, connDestAddr []byte) {
 	defer destConn.Close()
 	destConnReader := bufio.NewReader(destConn)
 
-	fmt.Fprintf(destConn, "CONNECT %s HTTP/1.0\r\n%s\r\n", connDestAddr, thc.headersFunc(connDestAddr))
+	var headers string
+	if thc.headersFunc != nil {
+		headers = thc.headersFunc(firstLineField)
+	}
+
+	fmt.Fprintf(destConn, "%s %s %s\r\n%s\r\n", firstLineField[0], firstLineField[1], firstLineField[2], headers)
 	destFirstLine, _, err := destConnReader.ReadLine()
 	if err != nil {
 		log.Printf("read dest first line from %s error: %s\n", destConn.RemoteAddr(), err)
@@ -133,7 +138,7 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, connDestAddr []byte) {
 	if destFields[1][0] != '2' {
 		//error
 		connectStatus := bytes.Join(destFields[3:], []byte{' '})
-		fmt.Fprintf(conn, "%s %s %s\r\n\r\n", connDestAddr, destFields[1], connectStatus)
+		fmt.Fprintf(conn, "%s %s %s\r\n\r\n", firstLineField[0], destFields[1], connectStatus)
 		return
 	}
 

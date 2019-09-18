@@ -9,7 +9,7 @@ import (
 
 var (
 	configPath string
-	servType   tunnelclient.ServType
+	servType   tunnelclient.ServMode
 	lc         lineconfig.LineConfig
 )
 
@@ -38,7 +38,7 @@ func main() {
 	tc := tunnelclient.NewTunnelHTTPClient()
 	tc.LocalAddr = lc["LocalAddr"]
 	tc.DestAddr = lc["DestAddr"]
-	tc.SetHeadersFunc(func(host []byte) string {
+	tc.SetHeadersFunc(func(firstLineFields [][]byte) string {
 		return lc["Headers"]
 	})
 	tc.SetRelayMethod(lc["RelayMethod"])

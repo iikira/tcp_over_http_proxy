@@ -53,12 +53,18 @@ func (thc *TunnelHTTPClient) checkRelay(data []byte) (isRelay bool, remainLength
 		return
 	}
 
-	headers := thc.headersFunc(fields[1])
+	var headers string
 
-	newData = make([]byte, 0, len(data)+len(headers))
-	newData = append(newData, data[:i+2]...)
-	newData = append(newData, headers...)
-	newData = append(newData, data[i+2:]...)
+	if thc.headersFunc != nil {
+		headers = thc.headersFunc(fields)
+		newData = make([]byte, 0, len(data)+len(headers))
+		newData = append(newData, data[:i+2]...)
+		newData = append(newData, headers...)
+		newData = append(newData, data[i+2:]...)
+	} else {
+		newData = data
+	}
+
 	isRelay = true
 	var contentLength int64 = -1
 	headerLines := bytes.Split(data[i:i+2+endI], []byte{'\r', '\n'})

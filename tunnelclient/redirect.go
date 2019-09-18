@@ -30,7 +30,7 @@ func (thc *TunnelHTTPClient) handleRedirect(c net.Conn) {
 	}
 	defer conn.Close()
 
-	thc.handle(conn, converter.ToBytes(dstAddr.String()))
+	thc.handle(conn, [][]byte{[]byte("CONNECT"), converter.ToBytes(dstAddr.String()), []byte("HTTP/1.0")})
 }
 
 func getOriginalDstAddr(conn *net.TCPConn) (addr net.Addr, c *net.TCPConn, err error) {
