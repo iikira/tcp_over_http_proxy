@@ -38,7 +38,7 @@ func main() {
 	tc := tunnelclient.NewTunnelHTTPClient()
 	tc.LocalAddr = lc["LocalAddr"]
 	tc.DestAddr = lc["DestAddr"]
-	tc.SetHeadersFunc(func(firstLineFields [][]byte) string {
+	tc.SetHeadersFunc(func(host []byte) string {
 		return lc["Headers"]
 	})
 	tc.SetRelayMethod(lc["RelayMethod"])

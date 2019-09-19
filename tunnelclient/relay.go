@@ -53,26 +53,39 @@ func (thc *TunnelHTTPClient) checkRelay(data []byte) (isRelay bool, remainLength
 		return
 	}
 
-	var headers string
+	// 检测Content-Length和host
+	isRelay = true
+	var (
+		contentLength int64 = -1
+		host          []byte
+		headers       string
+	)
+	headerLines := bytes.Split(data[i:i+2+endI], []byte{'\r', '\n'})
+	for _, line := range headerLines {
+		s := bytes.SplitN(line, []byte{':'}, 2)
+		if len(s) != 2 {
+			continue
+		}
+
+		if contentLength < 0 {
+			contentLength = parseContentLength(s)
+		}
+		if host == nil {
+			host = parseHost(s)
+		}
+		if host != nil && contentLength >= 0 {
+			break
+		}
+	}
 
 	if thc.headersFunc != nil {
-		headers = thc.headersFunc(fields)
+		headers = thc.headersFunc(host)
 		newData = make([]byte, 0, len(data)+len(headers))
 		newData = append(newData, data[:i+2]...)
 		newData = append(newData, headers...)
 		newData = append(newData, data[i+2:]...)
 	} else {
 		newData = data
-	}
-
-	isRelay = true
-	var contentLength int64 = -1
-	headerLines := bytes.Split(data[i:i+2+endI], []byte{'\r', '\n'})
-	for _, line := range headerLines {
-		contentLength = parseContentLength(line)
-		if contentLength >= 0 {
-			break
-		}
 	}
 
 	// 未检测到Content-Length
@@ -85,20 +98,23 @@ func (thc *TunnelHTTPClient) checkRelay(data []byte) (isRelay bool, remainLength
 	return
 }
 
-func parseContentLength(header []byte) int64 {
-	s := bytes.SplitN(header, []byte{':'}, 2)
-	if len(s) != 2 {
-		return -1
-	}
-
-	if strings.Compare(http.CanonicalHeaderKey(converter.ToString(s[0])), "Content-Length") != 0 {
+func parseContentLength(splitedHeader [][]byte) int64 {
+	if strings.Compare(http.CanonicalHeaderKey(converter.ToString(splitedHeader[0])), "Content-Length") != 0 {
 		return -2
 	}
 
-	i, err := strconv.ParseInt(converter.ToString(bytes.TrimSpace(s[1])), 10, 64)
+	i, err := strconv.ParseInt(converter.ToString(bytes.TrimSpace(splitedHeader[1])), 10, 64)
 	if err != nil {
 		return -3
 	}
 
 	return i
+}
+
+func parseHost(splitedHeader [][]byte) []byte {
+	if strings.Compare(http.CanonicalHeaderKey(converter.ToString(splitedHeader[0])), "Host") != 0 {
+		return nil
+	}
+
+	return bytes.TrimSpace(splitedHeader[1])
 }
