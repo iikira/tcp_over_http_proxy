@@ -3,6 +3,8 @@ github.com/astaxie/beego v1.10.1/go.mod h1:0R4++1tUqERR0WYFWdfkcrsyoVBCG4DgpDGok
 github.com/bitly/go-simplejson v0.5.0/go.mod h1:cXHtHw4XUPsvGaxgjIAn8PhEWG9NfngEKAMDJEczWVA=
 github.com/daaku/go.zipexe v0.0.0-20150329023125-a5fe2436ffcb/go.mod h1:U0vRfAucUOohvdCxt5MWLF+TePIL0xbCkbKIiV8TQCE=
 github.com/fatih/color v0.0.0-20150510220652-1b35f289c47d/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5KwzbycvMj4=
+github.com/ginuerzh/gosocks5 v0.2.0 h1:K0Ua23U9LU3BZrf3XpGDcs0mP8DiEpa6PJE4TA/MU3s=
+github.com/ginuerzh/gosocks5 v0.2.0/go.mod h1:qp22mr6tH/prEoaN0pFukq76LlScIE+F2rP2ZP5ZHno=
 github.com/iikira/Baidu-Login v0.0.0-20180427090606-ecf146973528/go.mod h1:oMWxZOoEMgQG+0rq8xhEIdxvXwkyG4aN3sZoOQ59R4Q=
 github.com/iikira/BaiduPCS-Go v0.0.0-20190810052828-437c7b2651e5 h1:1OmJJmX90+do1GwI42uJG0H82OHJ+3b7l37vSv2EQWI=
 github.com/iikira/BaiduPCS-Go v0.0.0-20190810052828-437c7b2651e5/go.mod h1:rCbH9E3nWcEQTWuvonUm/Wr4JTPfTu001WolzE9pucA=

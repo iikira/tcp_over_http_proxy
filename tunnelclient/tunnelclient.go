@@ -26,6 +26,7 @@ type (
 
 const (
 	SERV_HTTP_PROXY ServMode = iota
+	SERV_SOCKS5
 	SERV_REDIRECT
 )
 
@@ -62,6 +63,8 @@ func (thc *TunnelHTTPClient) ListenAndServe(st ServMode) (err error) {
 		switch st {
 		case SERV_HTTP_PROXY:
 			go thc.handleTunneling(conn)
+		case SERV_SOCKS5:
+			go thc.handleSocks5(conn)
 		case SERV_REDIRECT:
 			go thc.handleRedirect(conn)
 		}
