@@ -183,7 +183,7 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 				headers = thc.headersFunc(host)
 			}
 
-			fmt.Fprintf(destConn1, "CONNECT %s HTTP/1.1\r\n%s\r\n", host, headers)
+			fmt.Fprintf(destConn1, "CONNECT %s HTTP/1.0\r\n%s\r\n", host, headers)
 			destFirstLine, _, err := destConn1Reader.ReadLine()
 			if err != nil {
 				log.Printf("CONNECT %s in %s error: %s\n", host, destConn1.RemoteAddr(), err)
