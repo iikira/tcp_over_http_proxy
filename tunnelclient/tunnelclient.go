@@ -116,15 +116,14 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 		// Relay Method Conn
 		destConn2 net.Conn
 		buf       = bufPool.Get().([]byte)
-		wg        = sync.WaitGroup{}
 	)
 	defer bufPool.Put(buf)
 
 	for {
-		n, err := conn.Read(buf)
+		n, err := conn.Read(buf) // 读取本地主机的消息
 		if err != nil {
 			// 结束会话
-			break
+			return
 		}
 
 		// 判断是否为Relay Method
@@ -139,12 +138,12 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 					break
 				}
 				defer destConn2.Close()
-				wg.Add(1)
 				go func() {
 					recvBuf := bufPool.Get().([]byte)
-					io.CopyBuffer(conn, destConn2, recvBuf)
+					io.CopyBuffer(conn, destConn2, recvBuf) // 将远端主机的消息发送给本地主机
 					bufPool.Put(recvBuf)
-					wg.Done()
+					// 结束所有, 以退出连接
+					conn.Close()
 				}()
 			}
 
@@ -153,19 +152,20 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 				n, err = conn.Read(buf)
 				if err != nil {
 					log.Printf("RELAY: read from local %s error: %s\n", conn.LocalAddr(), err)
-					break
+					return
 				}
 
 				remainLength -= int64(n)
 				_, err = destConn2.Write(buf[:n])
 				if err != nil {
 					log.Printf("RELAY: write to remote %s error: %s\n", conn.RemoteAddr(), err)
-					break
+					return
 				}
 			}
 			continue
 		}
 
+		// 不是Relay Method
 		if destConn1 == nil {
 			// 初次连接
 			destConn1, err = net.DialTimeout("tcp", thc.DestAddr, 10*time.Second)
@@ -214,17 +214,18 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 				}
 			}
 
-			wg.Add(1)
 			go func() {
 				recvBuf := bufPool.Get().([]byte)
-				io.CopyBuffer(conn, destConn1, recvBuf)
+				io.CopyBuffer(conn, destConn1, recvBuf) // 将远端主机的消息发送给本地主机
 				bufPool.Put(recvBuf)
-				wg.Done()
+				// 结束所有, 以退出连接
+				conn.Close()
 			}()
 		}
 
-		// 普通处理
-		destConn1.Write(buf[:n])
+		_, err = destConn1.Write(buf[:n]) // 将本地主机的消息发送给远端主机
+		if err != nil {
+			return
+		}
 	}
-	wg.Wait()
 }
