@@ -119,6 +119,18 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 	)
 	defer bufPool.Put(buf)
 
+	// 关闭所有连接
+	closeAllConn := func() {
+		if destConn1 != nil {
+			destConn1.Close()
+		}
+		if destConn2 != nil {
+			destConn2.Close()
+		}
+		conn.Close()
+	}
+	defer closeAllConn()
+
 	for {
 		n, err := conn.Read(buf) // 读取本地主机的消息
 		if err != nil {
@@ -137,17 +149,20 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 					log.Printf("RELAY: dial2 %s error: %s\n", thc.DestAddr, err)
 					break
 				}
-				defer destConn2.Close()
 				go func() {
 					recvBuf := bufPool.Get().([]byte)
 					io.CopyBuffer(conn, destConn2, recvBuf) // 将远端主机的消息发送给本地主机
 					bufPool.Put(recvBuf)
 					// 结束所有, 以退出连接
-					conn.Close()
+					closeAllConn()
 				}()
 			}
 
-			destConn2.Write(newData)
+			_, err = destConn2.Write(newData)
+			if err != nil {
+				return
+			}
+
 			for remainLength > 0 {
 				n, err = conn.Read(buf)
 				if err != nil {
@@ -174,7 +189,6 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 				return
 			}
 
-			defer destConn1.Close()
 			destConn1Reader := bufio.NewReader(destConn1)
 
 			// 获取自定义headers
@@ -217,9 +231,8 @@ func (thc *TunnelHTTPClient) handle(conn net.Conn, host []byte) {
 			go func() {
 				recvBuf := bufPool.Get().([]byte)
 				io.CopyBuffer(conn, destConn1, recvBuf) // 将远端主机的消息发送给本地主机
-				bufPool.Put(recvBuf)
 				// 结束所有, 以退出连接
-				conn.Close()
+				closeAllConn()
 			}()
 		}
 

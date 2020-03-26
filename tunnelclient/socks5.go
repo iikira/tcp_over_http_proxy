@@ -37,6 +37,7 @@ func (thc *TunnelHTTPClient) handleSocks5Connect(conn net.Conn, req *gosocks5.Re
 	rep := gosocks5.NewReply(gosocks5.Succeeded, nil)
 	if err := rep.Write(conn); err != nil {
 		log.Printf("socks5 reply error: %s\n", err)
+		return
 	}
 
 	thc.handle(conn, converter.ToBytes(req.Addr.String()))
